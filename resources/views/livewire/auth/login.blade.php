@@ -1,6 +1,10 @@
-<x-layouts::auth :title="__('Log in')">
+<x-layouts::auth.monitor :title="__('Log in')">
     <div class="flex flex-col gap-6">
-        <x-auth-header :title="__('Log in to your account')" :description="__('Enter your email and password below to log in')" />
+        <div class="flex flex-col gap-2">
+            <p class="font-mono text-[11px] font-medium tracking-[0.22em] text-emerald-400 uppercase">{{ __('Console access') }}</p>
+            <flux:heading size="xl" level="1">{{ __('Sign in') }}</flux:heading>
+            <flux:subheading>{{ __('Open the monitor for uptime, certificates, and WordPress updates.') }}</flux:subheading>
+        </div>
 
         <!-- Session Status -->
         <x-auth-session-status class="text-center" :status="session('status')" />
@@ -56,4 +60,4 @@
             <flux:link :href="route('register')" wire:navigate>{{ __('Sign up') }}</flux:link>
         </div>
     </div>
-</x-layouts::auth>
+</x-layouts::auth.monitor>
