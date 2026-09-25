@@ -1,9 +1,9 @@
 <x-layouts::auth.monitor :title="__('Log in')">
     <div class="flex flex-col gap-6">
         <div class="flex flex-col gap-2">
-            <p class="font-mono text-[11px] font-medium tracking-[0.22em] text-emerald-400 uppercase">{{ __('Console access') }}</p>
-            <flux:heading size="xl" level="1">{{ __('Sign in') }}</flux:heading>
-            <flux:subheading>{{ __('Open the monitor for uptime, certificates, and WordPress updates.') }}</flux:subheading>
+            <p class="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">Your workspace</p>
+            <flux:heading size="xl" level="1">Welcome back</flux:heading>
+            <flux:subheading>Sign in to manage and monitor your WordPress websites.</flux:subheading>
         </div>
 
         <!-- Session Status -->
@@ -55,7 +55,7 @@
             </div>
         </form>
 
-        <div class="space-x-1 text-sm text-center rtl:space-x-reverse text-zinc-600 dark:text-zinc-400">
+        <div class="space-x-1 text-center text-sm text-slate-600 rtl:space-x-reverse">
             <span>{{ __('Don\'t have an account?') }}</span>
             <flux:link :href="route('register')" wire:navigate>{{ __('Sign up') }}</flux:link>
         </div>
