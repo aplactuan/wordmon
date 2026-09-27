@@ -24,12 +24,12 @@
         <div class="rounded-xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
             <p class="text-sm font-medium text-slate-500">Responding normally</p>
             <p class="mt-3 text-3xl font-semibold tracking-tight text-emerald-700">{{ $totals->healthy ?? 0 }}</p>
-            <p class="mt-1 text-xs text-slate-500">Latest HTTP check returned 200</p>
+            <p class="mt-1 text-xs text-slate-500">HTTP 200 with no current alerts</p>
         </div>
         <div class="rounded-xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
             <p class="text-sm font-medium text-slate-500">Needs attention</p>
             <p class="mt-3 text-3xl font-semibold tracking-tight text-amber-700">{{ $totals->attention ?? 0 }}</p>
-            <p class="mt-1 text-xs text-slate-500">Non-200 responses or certificates expiring soon</p>
+            <p class="mt-1 text-xs text-slate-500">Failed, unchecked, or certificates expiring soon</p>
         </div>
     </section>
 
@@ -39,8 +39,14 @@
                 <h2 id="site-list-heading" class="text-base font-semibold text-slate-900">Monitored websites</h2>
                 <p class="mt-1 text-sm text-slate-500">Status from the most recent completed check.</p>
             </div>
-            <div class="w-full sm:w-72">
-                <flux:input wire:model.live.debounce.300ms="search" icon="magnifying-glass" placeholder="Search by domain" aria-label="Search by domain" />
+            <div class="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
+                <div class="flex items-center gap-1 rounded-lg bg-slate-100 p-1" role="group" aria-label="Filter websites">
+                    <flux:button size="sm" variant="{{ $attentionOnly ? 'ghost' : 'primary' }}" aria-pressed="{{ $attentionOnly ? 'false' : 'true' }}" wire:click="filterByAttention(false)">All websites</flux:button>
+                    <flux:button size="sm" variant="{{ $attentionOnly ? 'primary' : 'ghost' }}" aria-pressed="{{ $attentionOnly ? 'true' : 'false' }}" wire:click="filterByAttention(true)">Needs attention ({{ $totals->attention ?? 0 }})</flux:button>
+                </div>
+                <div class="w-full sm:w-64">
+                    <flux:input wire:model.live.debounce.300ms="search" icon="magnifying-glass" placeholder="Search by domain" aria-label="Search by domain" />
+                </div>
             </div>
         </div>
 
@@ -49,9 +55,9 @@
                 <div class="flex size-12 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
                     <flux:icon.globe-alt class="size-6" />
                 </div>
-                <h3 class="mt-4 text-base font-semibold text-slate-900">{{ $search === '' ? 'No websites yet' : 'No matching websites' }}</h3>
-                <p class="mt-1 max-w-sm text-sm text-slate-500">{{ $search === '' ? 'Add your first WordPress website to start tracking its status, version, and certificate.' : 'Try another domain name or clear your search.' }}</p>
-                @if ($search === '')
+                <h3 class="mt-4 text-base font-semibold text-slate-900">{{ $attentionOnly || $search !== '' ? 'No matching websites' : 'No websites yet' }}</h3>
+                <p class="mt-1 max-w-sm text-sm text-slate-500">{{ $attentionOnly ? ($search === '' ? 'No websites need attention.' : 'No websites need attention for this search.') : ($search === '' ? 'Add your first WordPress website to start tracking its status, version, and certificate.' : 'Try another domain name or clear your search.') }}</p>
+                @if (! $attentionOnly && $search === '')
                     <flux:button class="mt-5" wire:click="$set('showAddForm', true)">Add your first website</flux:button>
                 @endif
             </div>
@@ -63,7 +69,12 @@
                             <th class="px-5 py-3.5">Website</th>
                             <th class="px-5 py-3.5">Latest status</th>
                             <th class="px-5 py-3.5">WordPress</th>
-                            <th class="px-5 py-3.5">SSL expires</th>
+                            <th class="px-5 py-3.5" aria-sort="{{ $sslSortDirection === 'asc' ? 'ascending' : ($sslSortDirection === 'desc' ? 'descending' : 'none') }}">
+                                <button type="button" wire:click="sortBySslExpiry" class="inline-flex items-center gap-1.5 whitespace-nowrap text-left hover:text-slate-900 focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600" aria-label="Sort by SSL expiry{{ $sslSortDirection === 'asc' ? ', currently earliest first' : ($sslSortDirection === 'desc' ? ', currently latest first' : '') }}">
+                                    SSL expires
+                                    <span aria-hidden="true" class="text-sm leading-none">{{ $sslSortDirection === 'asc' ? '↑' : ($sslSortDirection === 'desc' ? '↓' : '↕') }}</span>
+                                </button>
+                            </th>
                             <th class="px-5 py-3.5">Last checked</th>
                             <th class="px-5 py-3.5 text-right"><span class="sr-only">Actions</span></th>
                         </tr>
@@ -78,7 +89,7 @@
                                 <td class="px-5 py-4">
                                     @if ($website->status_code !== null)
                                         <span @class([
-                                            'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold',
+                                            'inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-semibold',
                                             'bg-emerald-50 text-emerald-700' => $website->status_code === 200,
                                             'bg-rose-50 text-rose-700' => $website->status_code !== 200,
                                         ])>
@@ -107,7 +118,7 @@
                                 <td class="px-5 py-4 text-right">
                                     <div class="flex justify-end gap-2">
                                         <flux:button size="sm" variant="ghost" wire:click="checkWebsite({{ $website->id }})" wire:loading.attr="disabled" wire:target="checkWebsite({{ $website->id }})">Check now</flux:button>
-                                        <flux:button size="sm" variant="ghost" wire:click="showIntegration({{ $website->id }})">n8n setup</flux:button>
+                                        <flux:button size="sm" variant="ghost" wire:click="openEdit({{ $website->id }})">Edit credentials</flux:button>
                                     </div>
                                 </td>
                             </tr>
@@ -171,26 +182,18 @@ example.com,admin,"abcd efgh ijkl mnop"</pre>
         </form>
     </flux:modal>
 
-    <flux:modal wire:model="showIntegration" class="w-full max-w-xl">
-        <div class="space-y-5">
+    <flux:modal wire:model="showEditForm" class="w-full max-w-lg">
+        <form wire:submit="updateCredentials" class="space-y-5">
             <div>
-                <flux:heading size="lg">Connect {{ $integrationDomain }} to n8n</flux:heading>
-                <flux:subheading>Use this site's token when n8n sends its hourly result to Wordmon.</flux:subheading>
+                <flux:heading size="lg">Edit website credentials</flux:heading>
+                <flux:subheading>Update the credentials used for manual checks of {{ $editingDomain }}.</flux:subheading>
             </div>
-            <div class="space-y-2">
-                <label for="integration-token" class="block text-sm font-medium text-slate-800">Bearer token</label>
-                <input id="integration-token" type="text" readonly onclick="this.select()" value="{{ $integrationToken }}" class="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-800" />
-                <p class="text-xs text-slate-500">Keep this token private. Click the field to select it.</p>
+            <flux:input wire:model="editingUsername" label="WordPress username" autocomplete="username" required />
+            <flux:input wire:model="editingApplicationPassword" type="password" label="New application password" description="Leave blank to keep the current password." autocomplete="new-password" />
+            <div class="flex justify-end gap-2 border-t border-slate-100 pt-4">
+                <flux:button type="button" variant="ghost" wire:click="$set('showEditForm', false)">Cancel</flux:button>
+                <flux:button type="submit" variant="primary" wire:loading.attr="disabled" wire:target="updateCredentials">Save credentials</flux:button>
             </div>
-            <div class="space-y-2">
-                <label for="integration-post-url" class="block text-sm font-medium text-slate-800">POST check result</label>
-                <input id="integration-post-url" type="text" readonly onclick="this.select()" value="{{ $checksUrl }}" class="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-800" />
-                <pre class="overflow-x-auto rounded-lg bg-slate-100 p-3 text-xs leading-relaxed text-slate-700">{{ json_encode(['domain' => $integrationDomain, 'status_code' => 200, 'wordpress_version' => '6.6.2', 'ssl_expires_at' => now()->addDays(90)->toIso8601String(), 'checked_at' => now()->toIso8601String(), 'check_error' => null], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) }}</pre>
-            </div>
-            <p class="text-xs text-slate-500">Send <code>Authorization: Bearer &lt;token&gt;</code> and <code>Content-Type: application/json</code>. Send a newer check time with each result. Use HTTPS outside local development.</p>
-            <div class="flex justify-end border-t border-slate-100 pt-4">
-                <flux:button wire:click="$set('showIntegration', false)">Done</flux:button>
-            </div>
-        </div>
+        </form>
     </flux:modal>
 </div>

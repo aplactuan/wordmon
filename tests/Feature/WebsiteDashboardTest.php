@@ -50,13 +50,31 @@ class WebsiteDashboardTest extends TestCase
             ->assertDontSee('private.example.com');
     }
 
-    public function test_a_user_cannot_view_another_users_integration_token(): void
+    public function test_a_user_cannot_open_another_users_credentials_form(): void
     {
         $website = Website::factory()->create();
 
         Livewire::actingAs(User::factory()->create())->test(Dashboard::class)
-            ->call('showIntegration', $website->id)
+            ->call('openEdit', $website->id)
             ->assertNotFound();
+    }
+
+    public function test_a_user_cannot_update_another_users_credentials_by_changing_the_editing_id(): void
+    {
+        $user = User::factory()->create();
+        $ownWebsite = Website::factory()->for($user)->create();
+        $otherWebsite = Website::factory()->create(['username' => 'original', 'application_password' => 'original password']);
+
+        Livewire::actingAs($user)->test(Dashboard::class)
+            ->call('openEdit', $ownWebsite->id)
+            ->set('editingWebsiteId', $otherWebsite->id)
+            ->set('editingUsername', 'changed')
+            ->set('editingApplicationPassword', 'changed password')
+            ->call('updateCredentials')
+            ->assertNotFound();
+
+        $this->assertSame('original', $otherWebsite->fresh()->username);
+        $this->assertSame('original password', $otherWebsite->fresh()->application_password);
     }
 
     public function test_a_user_cannot_manually_check_another_users_website(): void
@@ -102,16 +120,132 @@ class WebsiteDashboardTest extends TestCase
             ->assertSee('Sep 25, 2026');
     }
 
-    public function test_an_existing_website_gets_a_token_when_its_integration_is_opened(): void
+    public function test_summary_counts_each_website_once_when_http_is_200_but_ssl_expires_soon(): void
     {
-        $website = Website::factory()->create();
+        $this->travelTo('2026-09-27 10:00:00');
+        $user = User::factory()->create();
+        Website::factory()->for($user)->create(['status_code' => 200, 'ssl_expires_at' => '2027-01-10 00:00:00']);
+        Website::factory()->for($user)->create(['status_code' => 200, 'ssl_expires_at' => '2026-10-10 00:00:00']);
+        Website::factory()->for($user)->create(['status_code' => 503]);
+        Website::factory()->for($user)->create(['status_code' => null]);
+        Website::factory()->create(['status_code' => 200]);
+
+        $totals = Livewire::actingAs($user)->test(Dashboard::class)->viewData('totals');
+
+        $this->assertSame(4, (int) $totals->total);
+        $this->assertSame(1, (int) $totals->healthy);
+        $this->assertSame(3, (int) $totals->attention);
+    }
+
+    public function test_needs_attention_filter_matches_the_summary_and_combines_with_domain_search(): void
+    {
+        $this->travelTo('2026-09-27 10:00:00');
+        $user = User::factory()->create();
+        Website::factory()->for($user)->create(['domain' => 'healthy.example.com', 'status_code' => 200, 'ssl_expires_at' => '2027-01-10']);
+        Website::factory()->for($user)->create(['domain' => 'expiring.example.com', 'status_code' => 200, 'ssl_expires_at' => '2026-10-10']);
+        Website::factory()->for($user)->create(['domain' => 'failed.example.com', 'status_code' => 503]);
+        Website::factory()->for($user)->create(['domain' => 'unchecked.example.com']);
+        Website::factory()->for($user)->create(['domain' => 'error.example.com', 'status_code' => 200, 'check_error' => 'Certificate could not be verified.']);
+        Website::factory()->create(['domain' => 'someone-else.example.com', 'status_code' => 503]);
+
+        $component = Livewire::actingAs($user)->test(Dashboard::class)
+            ->call('filterByAttention', true)
+            ->assertSet('attentionOnly', true);
+
+        $this->assertSame(4, (int) $component->viewData('totals')->attention);
+        $this->assertSame(['error.example.com', 'expiring.example.com', 'failed.example.com', 'unchecked.example.com'], $component->viewData('websites')->getCollection()->pluck('domain')->all());
+
+        $component->set('search', 'expiring');
+
+        $this->assertSame(['expiring.example.com'], $component->viewData('websites')->getCollection()->pluck('domain')->all());
+    }
+
+    public function test_ssl_expiry_sort_toggles_direction_and_keeps_missing_dates_last(): void
+    {
+        $user = User::factory()->create();
+        Website::factory()->for($user)->create(['domain' => 'alpha.example.com']);
+        Website::factory()->for($user)->create(['domain' => 'beta.example.com', 'ssl_expires_at' => '2027-03-01']);
+        Website::factory()->for($user)->create(['domain' => 'gamma.example.com', 'ssl_expires_at' => '2027-01-01']);
+        Website::factory()->for($user)->create(['domain' => 'delta.example.com']);
+
+        $component = Livewire::actingAs($user)->test(Dashboard::class)
+            ->call('sortBySslExpiry')
+            ->assertSet('sslSortDirection', 'asc');
+
+        $this->assertSame(['gamma.example.com', 'beta.example.com', 'alpha.example.com', 'delta.example.com'], $component->viewData('websites')->getCollection()->pluck('domain')->all());
+
+        $component->call('sortBySslExpiry')->assertSet('sslSortDirection', 'desc');
+
+        $this->assertSame(['beta.example.com', 'gamma.example.com', 'alpha.example.com', 'delta.example.com'], $component->viewData('websites')->getCollection()->pluck('domain')->all());
+    }
+
+    public function test_switching_to_needs_attention_resets_pagination(): void
+    {
+        $user = User::factory()->create();
+        Website::factory()->for($user)->count(11)->create(['status_code' => 200]);
+        Website::factory()->for($user)->create(['domain' => 'needs-attention.example.com', 'status_code' => 503]);
+
+        $component = Livewire::actingAs($user)->test(Dashboard::class)
+            ->call('gotoPage', 2)
+            ->call('filterByAttention', true);
+
+        $this->assertSame(1, $component->viewData('websites')->currentPage());
+        $this->assertSame(['needs-attention.example.com'], $component->viewData('websites')->getCollection()->pluck('domain')->all());
+    }
+
+    public function test_the_edit_form_does_not_expose_the_saved_application_password(): void
+    {
+        $website = Website::factory()->create(['username' => 'site-admin', 'application_password' => 'private password']);
 
         Livewire::actingAs($website->user)->test(Dashboard::class)
-            ->call('showIntegration', $website->id)
-            ->assertSet('showIntegration', true)
-            ->assertSee(route('api.monitoring.websites.checks.store', $website));
+            ->assertSee('Edit credentials')
+            ->assertDontSee('n8n setup')
+            ->call('openEdit', $website->id)
+            ->assertSet('showEditForm', true)
+            ->assertSet('editingDomain', $website->domain)
+            ->assertSet('editingUsername', 'site-admin')
+            ->assertSet('editingApplicationPassword', '')
+            ->assertDontSee('private password');
+    }
 
-        $this->assertNotNull($website->fresh()->webhook_token);
+    public function test_a_user_can_update_a_websites_username_and_application_password(): void
+    {
+        $website = Website::factory()->create([
+            'username' => 'old-admin',
+            'application_password' => 'old password',
+            'status_code' => 200,
+        ]);
+
+        Livewire::actingAs($website->user)->test(Dashboard::class)
+            ->call('openEdit', $website->id)
+            ->set('editingUsername', 'new-admin')
+            ->set('editingApplicationPassword', 'new password')
+            ->call('updateCredentials')
+            ->assertHasNoErrors()
+            ->assertSet('showEditForm', false)
+            ->assertSee('new-admin');
+
+        $updated = $website->fresh();
+        $this->assertSame('new-admin', $updated->username);
+        $this->assertSame('new password', $updated->application_password);
+        $this->assertStringNotContainsString('new password', $updated->getRawOriginal('application_password'));
+        $this->assertSame(200, $updated->status_code);
+    }
+
+    public function test_leaving_the_new_password_blank_keeps_the_current_password(): void
+    {
+        $website = Website::factory()->create(['username' => 'old-admin', 'application_password' => 'current password']);
+        $encryptedPassword = $website->getRawOriginal('application_password');
+
+        Livewire::actingAs($website->user)->test(Dashboard::class)
+            ->call('openEdit', $website->id)
+            ->set('editingUsername', 'new-admin')
+            ->call('updateCredentials')
+            ->assertHasNoErrors();
+
+        $this->assertSame('new-admin', $website->fresh()->username);
+        $this->assertSame('current password', $website->fresh()->application_password);
+        $this->assertSame($encryptedPassword, $website->fresh()->getRawOriginal('application_password'));
     }
 
     public function test_check_now_uses_the_saved_credentials_and_updates_the_latest_result(): void

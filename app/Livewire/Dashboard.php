@@ -21,6 +21,10 @@ class Dashboard extends Component
 
     public string $search = '';
 
+    public bool $attentionOnly = false;
+
+    public ?string $sslSortDirection = null;
+
     public string $domain = '';
 
     public string $username = '';
@@ -36,16 +40,30 @@ class Dashboard extends Component
     /** @var array{imported: int, duplicates: int, invalid: int, issues: list<string>}|null */
     public ?array $importSummary = null;
 
-    public bool $showIntegration = false;
+    public bool $showEditForm = false;
 
-    public string $integrationDomain = '';
+    public ?int $editingWebsiteId = null;
 
-    public string $integrationToken = '';
+    public string $editingDomain = '';
 
-    public string $checksUrl = '';
+    public string $editingUsername = '';
+
+    public string $editingApplicationPassword = '';
 
     public function updatedSearch(): void
     {
+        $this->resetPage();
+    }
+
+    public function filterByAttention(bool $attentionOnly): void
+    {
+        $this->attentionOnly = $attentionOnly;
+        $this->resetPage();
+    }
+
+    public function sortBySslExpiry(): void
+    {
+        $this->sslSortDirection = $this->sslSortDirection === 'asc' ? 'desc' : 'asc';
         $this->resetPage();
     }
 
@@ -115,27 +133,57 @@ class Dashboard extends Component
         session()->flash('status', $result['check_error'] ?? 'Check completed for '.$website->domain.'.');
     }
 
-    public function showIntegration(int $websiteId): void
+    public function openEdit(int $websiteId): void
     {
         $website = Website::query()->where('user_id', Auth::id())->findOrFail($websiteId);
 
-        $this->integrationDomain = $website->domain;
-        $this->integrationToken = $website->ensureWebhookToken();
-        $this->checksUrl = route('api.monitoring.websites.checks.store', $website);
-        $this->showIntegration = true;
+        $this->editingWebsiteId = $website->id;
+        $this->editingDomain = $website->domain;
+        $this->editingUsername = $website->username;
+        $this->editingApplicationPassword = '';
+        $this->resetValidation();
+        $this->showEditForm = true;
+    }
+
+    public function updateCredentials(): void
+    {
+        $website = Website::query()->where('user_id', Auth::id())->findOrFail($this->editingWebsiteId);
+
+        $this->validate([
+            'editingUsername' => ['required', 'string', 'max:255'],
+            'editingApplicationPassword' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $website->username = $this->editingUsername;
+
+        if ($this->editingApplicationPassword !== '') {
+            $website->application_password = $this->editingApplicationPassword;
+        }
+
+        $website->save();
+
+        $this->reset('showEditForm', 'editingWebsiteId', 'editingDomain', 'editingUsername', 'editingApplicationPassword');
+        session()->flash('status', 'Credentials updated for '.$website->domain.'.');
     }
 
     public function render(): View
     {
         $query = Website::query()->where('user_id', Auth::id());
+        $needsAttentionCondition = 'status_code IS NULL OR status_code <> 200 OR check_error IS NOT NULL OR ssl_expires_at <= ?';
+        $sslWarningDate = now()->addDays(30);
+        $sslSortDirection = $this->sslSortDirection === 'desc' ? 'desc' : 'asc';
 
         $totals = (clone $query)->selectRaw('COUNT(*) as total')
-            ->selectRaw('SUM(CASE WHEN status_code = 200 THEN 1 ELSE 0 END) as healthy')
-            ->selectRaw('SUM(CASE WHEN (status_code IS NOT NULL AND status_code <> 200) OR (checked_at IS NOT NULL AND status_code IS NULL) OR check_error IS NOT NULL OR ssl_expires_at <= ? THEN 1 ELSE 0 END) as attention', [now()->addDays(30)])
+            ->selectRaw("SUM(CASE WHEN {$needsAttentionCondition} THEN 0 ELSE 1 END) as healthy", [$sslWarningDate])
+            ->selectRaw("SUM(CASE WHEN {$needsAttentionCondition} THEN 1 ELSE 0 END) as attention", [$sslWarningDate])
             ->first();
 
         $websites = (clone $query)
+            ->when($this->attentionOnly, fn ($query) => $query->whereRaw("({$needsAttentionCondition})", [$sslWarningDate]))
             ->when($this->search !== '', fn ($query) => $query->where('domain', 'like', '%'.$this->search.'%'))
+            ->when(in_array($this->sslSortDirection, ['asc', 'desc'], true), fn ($query) => $query
+                ->orderByRaw('ssl_expires_at IS NULL')
+                ->orderBy('ssl_expires_at', $sslSortDirection))
             ->orderBy('domain')
             ->paginate(10);
 
