@@ -24,12 +24,12 @@
         <div class="rounded-xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
             <p class="text-sm font-medium text-slate-500">Responding normally</p>
             <p class="mt-3 text-3xl font-semibold tracking-tight text-emerald-700">{{ $totals->healthy ?? 0 }}</p>
-            <p class="mt-1 text-xs text-slate-500">Latest HTTP check returned 2xx or 3xx</p>
+            <p class="mt-1 text-xs text-slate-500">Latest HTTP check returned 200</p>
         </div>
         <div class="rounded-xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
             <p class="text-sm font-medium text-slate-500">Needs attention</p>
             <p class="mt-3 text-3xl font-semibold tracking-tight text-amber-700">{{ $totals->attention ?? 0 }}</p>
-            <p class="mt-1 text-xs text-slate-500">Check errors or certificates expiring soon</p>
+            <p class="mt-1 text-xs text-slate-500">Non-200 responses or certificates expiring soon</p>
         </div>
     </section>
 
@@ -79,10 +79,10 @@
                                     @if ($website->status_code !== null)
                                         <span @class([
                                             'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold',
-                                            'bg-emerald-50 text-emerald-700' => $website->status_code < 400,
-                                            'bg-rose-50 text-rose-700' => $website->status_code >= 400,
+                                            'bg-emerald-50 text-emerald-700' => $website->status_code === 200,
+                                            'bg-rose-50 text-rose-700' => $website->status_code !== 200,
                                         ])>
-                                            <span @class(['size-1.5 rounded-full', 'bg-emerald-500' => $website->status_code < 400, 'bg-rose-500' => $website->status_code >= 400])></span>
+                                            <span @class(['size-1.5 rounded-full', 'bg-emerald-500' => $website->status_code === 200, 'bg-rose-500' => $website->status_code !== 200])></span>
                                             HTTP {{ $website->status_code }}
                                         </span>
                                     @else

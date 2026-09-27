@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Website;
 use Carbon\CarbonImmutable;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Throwable;
 
@@ -31,36 +32,51 @@ class WebsiteInspector
                 return $result;
             }
 
-            $response = Http::connectTimeout(3)
-                ->timeout(8)
-                ->withOptions($this->requestOptions($website->domain, $address))
-                ->get('https://'.$website->domain);
+            $response = null;
 
-            $result['status_code'] = $response->status();
+            for ($attempt = 0; $attempt < 3; $attempt++) {
+                try {
+                    $response = Http::connectTimeout(3)
+                        ->timeout(8)
+                        ->acceptJson()
+                        ->withBasicAuth($website->username, $website->application_password)
+                        ->withOptions($this->requestOptions($website->domain, $address))
+                        ->get('https://'.$website->domain.'/wp-json/wp-autoops/v1/status');
 
-            if ($response->successful() && preg_match('/<meta[^>]*name=["\']generator["\'][^>]*content=["\']WordPress\s+([0-9][0-9.]+)["\']/i', $response->body(), $matches)) {
-                $result['wordpress_version'] = $matches[1];
-            }
-
-            if ($result['wordpress_version'] === null) {
-                $feed = Http::connectTimeout(3)
-                    ->timeout(8)
-                    ->withOptions($this->requestOptions($website->domain, $address))
-                    ->get('https://'.$website->domain.'/feed/');
-
-                if ($feed->successful() && preg_match('#<generator>https?://wordpress\.org/\?v=([0-9][0-9.]+)</generator>#i', $feed->body(), $matches)) {
-                    $result['wordpress_version'] = $matches[1];
+                    if ($response->status() === 200) {
+                        break;
+                    }
+                } catch (ConnectionException) {
+                    // A later attempt can still recover from a temporary connection failure.
                 }
             }
 
-            $authentication = Http::withBasicAuth($website->username, $website->application_password)
-                ->connectTimeout(3)
-                ->timeout(8)
-                ->withOptions($this->requestOptions($website->domain, $address))
-                ->get('https://'.$website->domain.'/wp-json/wp/v2/users/me');
+            if ($response === null) {
+                $result['check_error'] = 'The site could not be reached after three attempts.';
 
-            if (! $authentication->successful()) {
+                return $result;
+            }
+
+            $result['status_code'] = $response->status();
+
+            if (in_array($response->status(), [401, 403], true)) {
                 $result['check_error'] = 'WordPress credentials could not be verified.';
+            } elseif ($response->status() !== 200) {
+                $result['check_error'] = 'Status endpoint returned HTTP '.$response->status().'.';
+
+                return $result;
+            }
+
+            if ($result['check_error'] !== null) {
+                return $result;
+            }
+
+            $version = $response->json('data.wordpress.version');
+
+            if ($response->json('success') !== true || ! is_string($version) || trim($version) === '' || mb_strlen($version) > 50) {
+                $result['check_error'] = 'Status endpoint returned an invalid response.';
+            } else {
+                $result['wordpress_version'] = $version;
             }
 
             $result['ssl_expires_at'] = $this->certificateExpiry($website->domain, $address);
@@ -77,7 +93,7 @@ class WebsiteInspector
         return $result;
     }
 
-    private function publicAddress(string $domain): ?string
+    protected function publicAddress(string $domain): ?string
     {
         $records = dns_get_record($domain, DNS_A | DNS_AAAA);
 
@@ -109,7 +125,7 @@ class WebsiteInspector
         ];
     }
 
-    private function certificateExpiry(string $domain, string $address): ?\DateTimeImmutable
+    protected function certificateExpiry(string $domain, string $address): ?\DateTimeImmutable
     {
         $context = stream_context_create(['ssl' => [
             'capture_peer_cert' => true,

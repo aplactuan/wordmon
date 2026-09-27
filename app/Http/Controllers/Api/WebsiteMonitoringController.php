@@ -33,7 +33,7 @@ class WebsiteMonitoringController extends Controller
                 return false;
             }
 
-            $current->update([
+            $current->recordCheck([
                 'status_code' => $validated['status_code'] ?? null,
                 'wordpress_version' => $validated['wordpress_version'] ?? null,
                 'ssl_expires_at' => $validated['ssl_expires_at'] ?? null,

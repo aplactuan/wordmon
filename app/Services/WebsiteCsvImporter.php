@@ -37,6 +37,7 @@ class WebsiteCsvImporter
             $rows = [];
             $issues = [];
             $invalid = 0;
+            $duplicatesInFile = 0;
             $rowNumber = 1;
             $dataRows = 0;
 
@@ -79,7 +80,13 @@ class WebsiteCsvImporter
                     continue;
                 }
 
-                $rows[] = $values;
+                if (isset($rows[$values['domain']])) {
+                    $duplicatesInFile++;
+
+                    continue;
+                }
+
+                $rows[$values['domain']] = $values;
             }
         } finally {
             fclose($handle);
@@ -89,7 +96,7 @@ class WebsiteCsvImporter
             throw ValidationException::withMessages(['csvFile' => 'The CSV file has no website rows.']);
         }
 
-        [$imported, $duplicates] = DB::transaction(function () use ($rows, $userId): array {
+        [$imported, $existingDuplicates] = DB::transaction(function () use ($rows, $userId): array {
             $imported = 0;
             $duplicates = 0;
 
@@ -109,6 +116,8 @@ class WebsiteCsvImporter
 
             return [$imported, $duplicates];
         });
+
+        $duplicates = $duplicatesInFile + $existingDuplicates;
 
         return compact('imported', 'duplicates', 'invalid', 'issues');
     }

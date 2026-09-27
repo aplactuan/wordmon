@@ -110,7 +110,7 @@ class Dashboard extends Component
         $website = Website::query()->where('user_id', Auth::id())->findOrFail($websiteId);
         $result = $inspector->inspect($website);
 
-        $website->update($result);
+        $website->recordCheck($result);
 
         session()->flash('status', $result['check_error'] ?? 'Check completed for '.$website->domain.'.');
     }
@@ -130,8 +130,8 @@ class Dashboard extends Component
         $query = Website::query()->where('user_id', Auth::id());
 
         $totals = (clone $query)->selectRaw('COUNT(*) as total')
-            ->selectRaw('SUM(CASE WHEN status_code BETWEEN 200 AND 399 THEN 1 ELSE 0 END) as healthy')
-            ->selectRaw('SUM(CASE WHEN status_code >= 400 OR (checked_at IS NOT NULL AND status_code IS NULL) OR check_error IS NOT NULL OR ssl_expires_at <= ? THEN 1 ELSE 0 END) as attention', [now()->addDays(30)])
+            ->selectRaw('SUM(CASE WHEN status_code = 200 THEN 1 ELSE 0 END) as healthy')
+            ->selectRaw('SUM(CASE WHEN (status_code IS NOT NULL AND status_code <> 200) OR (checked_at IS NOT NULL AND status_code IS NULL) OR check_error IS NOT NULL OR ssl_expires_at <= ? THEN 1 ELSE 0 END) as attention', [now()->addDays(30)])
             ->first();
 
         $websites = (clone $query)

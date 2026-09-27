@@ -139,11 +139,16 @@ class WebsiteDashboardTest extends TestCase
 
     public function test_check_now_records_a_failed_check(): void
     {
-        $website = Website::factory()->create();
+        $website = Website::factory()->create([
+            'status_code' => 200,
+            'wordpress_version' => '6.8.3',
+            'ssl_expires_at' => '2027-01-10 00:00:00',
+            'checked_at' => '2026-09-25 10:00:00',
+        ]);
 
         $inspector = $this->mock(WebsiteInspector::class);
         $inspector->shouldReceive('inspect')->once()->andReturn([
-            'status_code' => null,
+            'status_code' => 503,
             'wordpress_version' => null,
             'ssl_expires_at' => null,
             'checked_at' => now(),
@@ -154,8 +159,11 @@ class WebsiteDashboardTest extends TestCase
             ->call('checkWebsite', $website->id)
             ->assertSee('The site could not be checked.');
 
-        $this->assertSame('The site could not be checked.', $website->fresh()->check_error);
-        $this->assertNotNull($website->fresh()->checked_at);
+        $this->assertSame(503, $website->fresh()->status_code);
+        $this->assertSame('6.8.3', $website->fresh()->wordpress_version);
+        $this->assertSame('2027-01-10', $website->fresh()->ssl_expires_at?->format('Y-m-d'));
+        $this->assertSame('2026-09-25 10:00:00', $website->fresh()->checked_at?->toDateTimeString());
+        $this->assertNull($website->fresh()->check_error);
     }
 
     public function test_a_user_can_import_websites_and_encrypted_credentials_from_csv(): void
@@ -182,7 +190,7 @@ class WebsiteDashboardTest extends TestCase
         $user = User::factory()->create();
         Website::factory()->for($user)->create(['domain' => 'existing.example.com', 'application_password' => 'original password']);
         Website::factory()->create(['domain' => 'shared.example.com']);
-        $csv = UploadedFile::fake()->createWithContent('websites.csv', "domain,username,application_password\nexisting.example.com,admin,new password\nshared.example.com,editor,shared password\nshared.example.com,editor,duplicate password\n");
+        $csv = UploadedFile::fake()->createWithContent('websites.csv', "domain,username,application_password\nhttps://EXISTING.example.com/,admin,new password\nshared.example.com,editor,shared password\nHTTPS://SHARED.EXAMPLE.COM/,editor,duplicate password\n");
 
         Livewire::actingAs($user)->test(Dashboard::class)
             ->set('csvFile', $csv)
@@ -193,6 +201,32 @@ class WebsiteDashboardTest extends TestCase
 
         $this->assertSame('original password', Website::query()->where('user_id', $user->id)->where('domain', 'existing.example.com')->sole()->application_password);
         $this->assertSame('shared password', Website::query()->where('user_id', $user->id)->where('domain', 'shared.example.com')->sole()->application_password);
+        $this->assertSame(2, Website::query()->where('user_id', $user->id)->count());
+    }
+
+    public function test_importing_the_same_csv_again_skips_every_domain_without_changing_credentials(): void
+    {
+        $user = User::factory()->create();
+        $firstCsv = UploadedFile::fake()->createWithContent('websites.csv', "domain,username,application_password\nalpha.example.com,admin,original password\nbeta.example.com,editor,second password\n");
+
+        Livewire::actingAs($user)->test(Dashboard::class)
+            ->set('csvFile', $firstCsv)
+            ->call('importCsv')
+            ->assertHasNoErrors()
+            ->assertSee('2 imported');
+
+        $secondCsv = UploadedFile::fake()->createWithContent('websites.csv', "domain,username,application_password\nhttps://ALPHA.example.com/,other,replacement password\nBETA.EXAMPLE.COM,other,replacement password\n");
+
+        Livewire::actingAs($user)->test(Dashboard::class)
+            ->set('csvFile', $secondCsv)
+            ->call('importCsv')
+            ->assertHasNoErrors()
+            ->assertSee('0 imported')
+            ->assertSee('2 duplicates skipped');
+
+        $this->assertSame(2, Website::query()->where('user_id', $user->id)->count());
+        $this->assertSame('original password', Website::query()->where('user_id', $user->id)->where('domain', 'alpha.example.com')->sole()->application_password);
+        $this->assertSame('second password', Website::query()->where('user_id', $user->id)->where('domain', 'beta.example.com')->sole()->application_password);
     }
 
     public function test_csv_import_reports_invalid_rows_without_exposing_passwords(): void

@@ -61,4 +61,14 @@ class Website extends Model
 
         return $this->webhook_token;
     }
+
+    /**
+     * @param  array{status_code: int|null, wordpress_version?: mixed, ssl_expires_at?: mixed, checked_at?: mixed, check_error?: string|null}  $result
+     */
+    public function recordCheck(array $result): void
+    {
+        $this->update($result['status_code'] === 200 && ($result['check_error'] ?? null) === null
+            ? $result
+            : ['status_code' => $result['status_code']]);
+    }
 }
