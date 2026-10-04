@@ -411,4 +411,42 @@ class WebsiteDashboardTest extends TestCase
 
         $this->assertSame(0, Website::query()->where('user_id', $user->id)->count());
     }
+
+    public function test_a_user_can_export_webhook_tokens_for_their_websites(): void
+    {
+        $user = User::factory()->create();
+        $alpha = Website::factory()->for($user)->create(['domain' => 'alpha.example.com']);
+        $beta = Website::factory()->for($user)->create(['domain' => 'beta.example.com']);
+
+        Livewire::actingAs($user)->test(Dashboard::class)
+            ->call('exportWebhooks')
+            ->assertFileDownloaded(
+                'websites-webhook-tokens.csv',
+                "id,domain,webhook_token\n{$alpha->id},alpha.example.com,{$alpha->fresh()->webhook_token}\n{$beta->id},beta.example.com,{$beta->fresh()->webhook_token}\n",
+            );
+
+        $this->assertNotNull($alpha->fresh()->webhook_token);
+        $this->assertNotNull($beta->fresh()->webhook_token);
+    }
+
+    public function test_webhook_export_omits_other_users_and_application_passwords(): void
+    {
+        $user = User::factory()->create();
+        $website = Website::factory()->for($user)->create([
+            'domain' => 'mine.example.com',
+            'application_password' => 'secret password',
+        ]);
+        $other = Website::factory()->create(['domain' => 'other.example.com']);
+        $otherToken = $other->ensureWebhookToken();
+
+        $component = Livewire::actingAs($user)->test(Dashboard::class)
+            ->call('exportWebhooks');
+
+        $download = base64_decode((string) data_get($component->effects, 'download.content'));
+
+        $this->assertStringContainsString((string) $website->fresh()->webhook_token, $download);
+        $this->assertStringNotContainsString('other.example.com', $download);
+        $this->assertStringNotContainsString($otherToken, $download);
+        $this->assertStringNotContainsString('secret password', $download);
+    }
 }

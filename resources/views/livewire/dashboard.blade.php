@@ -6,6 +6,7 @@
             <p class="text-sm text-slate-500">A clear view of your WordPress sites and their latest checks.</p>
         </div>
         <div class="flex flex-wrap gap-2">
+            <flux:button wire:click="exportWebhooks">Export webhooks</flux:button>
             <flux:button wire:click="openImport">Import CSV</flux:button>
             <flux:button variant="primary" icon="plus" wire:click="$set('showAddForm', true)">Add website</flux:button>
         </div>

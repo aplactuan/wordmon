@@ -13,6 +13,7 @@ use Livewire\Component;
 use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 use Livewire\WithFileUploads;
 use Livewire\WithPagination;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 #[Title('Websites')]
 class Dashboard extends Component
@@ -95,6 +96,32 @@ class Dashboard extends Component
         $this->reset('domain', 'username', 'applicationPassword', 'showAddForm');
         $this->resetPage();
         session()->flash('status', 'Website added. Select Check now to run its first check.');
+    }
+
+    public function exportWebhooks(): StreamedResponse
+    {
+        $websites = Website::query()
+            ->where('user_id', Auth::id())
+            ->orderBy('id')
+            ->lazyById();
+
+        return response()->streamDownload(function () use ($websites): void {
+            $handle = fopen('php://output', 'w');
+
+            if ($handle === false) {
+                return;
+            }
+
+            fputcsv($handle, ['id', 'domain', 'webhook_token'], ',', '"', '');
+
+            foreach ($websites as $website) {
+                fputcsv($handle, [$website->id, $website->domain, $website->ensureWebhookToken()], ',', '"', '');
+            }
+
+            fclose($handle);
+        }, 'websites-webhook-tokens.csv', [
+            'Content-Type' => 'text/csv',
+        ]);
     }
 
     public function openImport(): void
